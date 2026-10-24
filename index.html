@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flashcards by Alex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap">
+
+<!-- Firebase (accounts + saving). Don't change these three lines. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<style>
+:root {
+  --desk: #e7ecef; --desk-2: #d8dfe4; --ink: #1d2a33; --muted: #5b6b76;
+  --card: #fffdf6; --rule: #b9d3e8; --margin: #e0636b; --accent: #2f6fd6; --accent-ink: #ffffff;
+  --good: #2e8b57; --again: #d0662b; --line: #c3ccd3;
+  --shadow: 0 1px 0 rgba(0,0,0,.04), 0 10px 30px rgba(29,42,51,.14);
+  --f-card: "Patrick Hand", "Comic Sans MS", "Segoe Print", cursive;
+  --f-ui: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --desk: #151b20; --desk-2: #1d252c; --ink: #e6edf2; --muted: #93a3ae;
+    --card: #23292e; --rule: #2f4a60; --margin: #b4474f; --accent: #6ea2ff; --accent-ink: #0d1520;
+    --good: #5cc38a; --again: #f08c52; --line: #34404a;
+    --shadow: 0 10px 30px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--desk); color: var(--ink); font-family: var(--f-ui); font-size: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+h1 { font-weight: 800; font-size: clamp(1.6rem, 5vw, 2.2rem); margin: 0; letter-spacing: -.02em; }
+h1 span { font-family: var(--f-card); font-weight: 400; color: var(--margin); letter-spacing: 0; }
+.deckpick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.small { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+p.small { margin: 0; }
+select, input {
+  font: inherit; color: var(--ink); background: var(--card); border: 1.5px solid var(--line);
+  border-radius: 8px; padding: 9px 11px; min-width: 0;
+}
+select:focus-visible, input:focus-visible, button:focus-visible, .card:focus-visible, a:focus-visible {
+  outline: 3px solid var(--accent); outline-offset: 2px;
+}
+.sync { margin: -10px 0 0; font-size: .85rem; color: var(--muted); }
+
+.progress { display: flex; align-items: center; gap: 12px; font-size: .9rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { flex: 1; height: 6px; background: var(--desk-2); border-radius: 99px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+.tally { display: flex; gap: 10px; }
+.tally b.g { color: var(--good); } .tally b.a { color: var(--again); }
+
+.stage { perspective: 1400px; }
+.card {
+  position: relative; width: 100%; aspect-ratio: 5 / 3; max-width: 100%; cursor: pointer;
+  transform-style: preserve-3d; transition: transform .5s cubic-bezier(.3,.7,.2,1); border-radius: 6px;
+}
+.card.flipped { transform: rotateY(180deg); }
+.face {
+  position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  background-color: var(--card); border-radius: 6px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.face.back {
+  transform: rotateY(180deg);
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 33px, var(--rule) 33px, var(--rule) 34px);
+  background-position: 0 44px;
+}
+.face.back::before { content: ""; position: absolute; left: 0; right: 0; top: 43px; height: 2px; background: var(--margin); }
+.face .tag { padding: 12px 16px 0; font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; }
+.face .txt {
+  flex: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+  font-family: var(--f-card); font-size: clamp(1.4rem, 5.2vw, 2.4rem); line-height: 1.25; padding: 12px 24px 28px;
+  overflow-wrap: anywhere; overflow-y: auto;
+}
+.face.back .txt { font-size: clamp(1.2rem, 4.4vw, 2rem); }
+.hint { text-align: center; font-size: .85rem; color: var(--muted); margin: -8px 0 0; }
+kbd { font-family: var(--f-ui); font-size: .78rem; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); }
+
+.controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+button {
+  font: inherit; font-weight: 600; border: 1.5px solid var(--line); background: var(--card); color: var(--ink);
+  border-radius: 10px; padding: 10px 16px; cursor: pointer; transition: transform .1s, background .15s;
+}
+button:hover { background: var(--desk-2); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .6; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.good { border-color: var(--good); color: var(--good); }
+button.again { border-color: var(--again); color: var(--again); }
+button.ghost { border-color: transparent; background: transparent; color: var(--muted); padding: 6px 8px; }
+button.ghost:hover { color: var(--ink); background: var(--desk-2); }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600; text-decoration: underline; }
+
+.done {
+  background: var(--card); border-radius: 6px; box-shadow: var(--shadow); padding: 36px 24px; text-align: center;
+  display: flex; flex-direction: column; gap: 14px; align-items: center;
+}
+.done h2 { font-family: var(--f-card); font-weight: 400; font-size: 2.2rem; margin: 0; }
+.done p { margin: 0; color: var(--muted); }
+
+section.editor { background: var(--desk-2); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+section.editor h3 { margin: 0; font-size: 1.1rem; }
+.add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.add div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+@media (max-width: 560px) { .add { grid-template-columns: 1fr; } }
+ul.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+ul.list li {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: center;
+  background: var(--card); border-radius: 8px; padding: 8px 8px 8px 12px; font-size: .95rem;
+}
+ul.list li span { min-width: 0; overflow-wrap: anywhere; }
+ul.list li span.q { font-weight: 600; }
+ul.list li span.a { color: var(--muted); }
+ul.list li.empty { background: transparent; color: var(--muted); display: block; padding: 0; }
+.deckrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.deckrow input { flex: 1; min-width: 140px; }
+.confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .9rem; }
+
+/* login */
+.login { min-height: 80vh; display: flex; align-items: center; justify-content: center; }
+.loginCard {
+  width: 100%; max-width: 440px; background: var(--card); border-radius: 6px; box-shadow: var(--shadow);
+  border-top: 4px solid var(--margin); padding: 28px 24px; display: flex; flex-direction: column; gap: 16px;
+}
+.loginCard .sub { margin: 0; font-family: var(--f-card); font-size: 1.7rem; }
+.tabs { display: flex; gap: 6px; background: var(--desk-2); padding: 4px; border-radius: 10px; }
+.tabs button { flex: 1; border: 0; background: transparent; padding: 8px; }
+.tabs button[aria-selected="true"] { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.loginForm { display: flex; flex-direction: column; gap: 6px; }
+.loginForm button[type="submit"] { margin-top: 8px; }
+.msg { margin: 0; font-size: .9rem; font-weight: 600; }
+.msg.err { color: var(--again); }
+.msg.ok { color: var(--good); }
+.note { margin: 0; font-size: .85rem; color: var(--muted); }
+.setup { background: var(--desk-2); border-radius: 8px; padding: 12px 14px; font-size: .9rem; line-height: 1.45; }
+.setup b { color: var(--again); }
+.who { font-size: .95rem; }
+
+@media (prefers-reduced-motion: reduce) { .card, .bar i { transition: none; } }
+</style>
+</head>
+<body>
+
+<!-- ====== LOGIN SCREEN ====== -->
+<div class="login" id="login">
+  <div class="loginCard">
+    <h1>Flashcards <span>by Alex</span></h1>
+    <div class="setup" id="setupMsg" hidden>
+      <b>Almost ready!</b> This site still needs its Firebase settings. Open <code>index.html</code>, find <code>firebaseConfig</code> near the bottom, and paste in the settings from your Firebase project.
+    </div>
+    <p class="note" id="loadingMsg">Loading…</p>
+    <div id="authArea" hidden>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tabLogin" aria-selected="true">Log in</button>
+        <button type="button" role="tab" id="tabSignup" aria-selected="false">Sign up</button>
+      </div>
+      <p class="sub" id="authTitle" style="margin-top:14px">Welcome back!</p>
+      <form id="authForm" class="loginForm" novalidate>
+        <div id="nameWrap" class="loginForm" hidden>
+          <label class="small" for="nameIn">Your name</label>
+          <input id="nameIn" maxlength="30" autocomplete="nickname" placeholder="Alex">
+        </div>
+        <label class="small" for="emailIn">Email</label>
+        <input id="emailIn" type="email" autocomplete="email" placeholder="you@example.com">
+        <div id="pwWrap" class="loginForm">
+          <label class="small" for="pwIn">Password</label>
+          <input id="pwIn" type="password" autocomplete="current-password" placeholder="At least 6 characters">
+        </div>
+        <p class="msg" id="authMsg" hidden></p>
+        <button class="primary" type="submit" id="authBtn">Log in</button>
+      </form>
+      <p class="note" style="margin-top:12px">
+        <button type="button" class="link" id="forgotBtn">Forgot your password?</button>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ====== MAIN APP ====== -->
+<div class="wrap" id="app" hidden>
+  <header>
+    <h1>Flashcards <span>by Alex</span></h1>
+    <div class="deckpick">
+      <span class="who">Hi, <b id="whoName"></b>!</span>
+      <button class="ghost" id="logoutBtn" type="button">Log out</button>
+      <label class="small" for="deckSel">Deck</label>
+      <select id="deckSel"></select>
+    </div>
+  </header>
+  <p class="sync" id="syncNote">☁ Saved to your account</p>
+
+  <div class="progress">
+    <span id="pos">1 / 1</span>
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="tally"><span>Got it <b class="g" id="nGood">0</b></span><span>Again <b class="a" id="nAgain">0</b></span></div>
+  </div>
+
+  <div id="studyArea">
+    <div class="stage">
+      <div class="card" id="card" tabindex="0" role="button" aria-label="Flashcard, press to flip">
+        <div class="face front"><div class="tag"><span>Question</span><span id="deckTag"></span></div><div class="txt" id="front"></div></div>
+        <div class="face back"><div class="tag"><span>Answer</span></div><div class="txt" id="back"></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="done" id="doneArea" hidden>
+    <h2 id="doneTitle">Deck done!</h2>
+    <p id="doneText"></p>
+    <div class="controls">
+      <button class="primary" id="retryMissed">Practice the missed ones</button>
+      <button id="restartAll">Start over</button>
+    </div>
+  </div>
+
+  <p class="hint" id="hint">Tap the card to flip it · <kbd>Space</kbd> flip · <kbd>←</kbd> <kbd>→</kbd> move</p>
+
+  <div class="controls" id="studyControls">
+    <button id="prevBtn" aria-label="Previous card">← Back</button>
+    <button class="again" id="againBtn">Again</button>
+    <button class="good" id="goodBtn">Got it ✓</button>
+    <button id="shuffleBtn">Shuffle</button>
+  </div>
+
+  <section class="editor">
+    <h3>Make your own cards</h3>
+    <form class="add" id="addForm">
+      <div><label class="small" for="qIn">Front (question)</label><input id="qIn" placeholder="What is 7 × 8?" required></div>
+      <div><label class="small" for="aIn">Back (answer)</label><input id="aIn" placeholder="56" required></div>
+      <button class="primary" type="submit">Add card</button>
+    </form>
+    <ul class="list" id="list"></ul>
+    <div class="deckrow">
+      <input id="newDeck" placeholder="New deck name, like Science Test" aria-label="New deck name">
+      <button id="makeDeck" type="button">New deck</button>
+      <button class="ghost" id="delDeck" type="button">Delete this deck</button>
+    </div>
+    <div class="confirm" id="confirmDel" hidden>
+      <span>Delete "<b id="delName"></b>" and all its cards?</span>
+      <button class="again" id="yesDel" type="button">Yes, delete</button>
+      <button id="noDel" type="button">Keep it</button>
+    </div>
+  </section>
+</div>
+
+<script>
+/* =========================================================
+   STEP 1 OF SETUP: paste your Firebase settings here.
+   Replace this whole block with the one Firebase gives you.
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyA5i54DTv1YYRo2MuNxlHfKPyKt8JE9AQE",
+  authDomain: "alex-flashcards-e354f.firebaseapp.com",
+  databaseURL: "https://alex-flashcards-e354f-default-rtdb.firebaseio.com",
+  projectId: "alex-flashcards-e354f",
+  storageBucket: "alex-flashcards-e354f.firebasestorage.app",
+  messagingSenderId: "819081328272",
+  appId: "1:819081328272:web:9220b1b047d5202c600a15",
+  measurementId: "G-N4V4WSS3YP"
+};
+/* ========================================================= */
+
+(function(){
+  const $ = id => document.getElementById(id);
+  const clone = o => JSON.parse(JSON.stringify(o));
+
+  const sample = {
+    current: "Times Tables",
+    decks: {
+      "Times Tables": [["7 × 8","56"],["6 × 9","54"],["12 × 12","144"],["8 × 4","32"],["9 × 7","63"],["11 × 6","66"]],
+      "Space Facts": [["Biggest planet in our solar system?","Jupiter"],["Closest star to Earth?","The Sun"],["Which planet is called the Red Planet?","Mars"],["How many planets orbit the Sun?","8"],["What is Earth's moon made mostly of?","Rock"]],
+      "Spanish Words": [["hola","hello"],["gato","cat"],["perro","dog"],["gracias","thank you"],["amigo","friend"],["rojo","red"]]
+    }
+  };
+
+  /* ---------- saving to Firebase ---------- */
+  let data = null, ref = null, unsub = null, writing = false, dirty = false, lastJSON = "";
+
+  const toDoc = d => ({
+    current: d.current,
+    decks: Object.keys(d.decks).map(n => ({ name: n, cards: d.decks[n].map(c => ({ q: c[0], a: c[1] })) }))
+  });
+  const fromDoc = d => {
+    const decks = {};
+    (Array.isArray(d && d.decks) ? d.decks : []).forEach(x => {
+      if (x && typeof x.name === "string") decks[x.name] = (Array.isArray(x.cards) ? x.cards : []).map(c => [String((c && c.q) || ""), String((c && c.a) || "")]);
+    });
+    return { current: d && d.current, decks };
+  };
+  const fixCurrent = () => {
+    if (!data.decks || !Object.keys(data.decks).length) data.decks = { "My Deck": [] };
+    if (!data.decks[data.current]) data.current = Object.keys(data.decks)[0];
+  };
+  async function save(){
+    if (!ref) return;
+    if (writing) { dirty = true; return; }
+    writing = true;
+    const body = toDoc(data);
+    lastJSON = JSON.stringify(body);
+    $("syncNote").textContent = "Saving…";
+    try {
+      await ref.set(body);
+      $("syncNote").textContent = "☁ Saved to your account";
+    } catch (e) {
+      $("syncNote").textContent = "Couldn't save right now. Check your internet and try again.";
+    }
+    writing = false;
+    if (dirty) { dirty = false; save(); }
+  }
+
+  /* ---------- studying ---------- */
+  let order = [], i = 0, good = new Set(), again = new Set();
+  const deck = () => data.decks[data.current];
+
+  function startSession(indices){
+    order = indices || deck().map((_, k) => k);
+    i = 0; good = new Set(); again = new Set();
+    render();
+  }
+  function renderDeckSel(){
+    $("deckSel").innerHTML = "";
+    Object.keys(data.decks).forEach(n => {
+      const o = document.createElement("option"); o.value = n; o.textContent = n + " (" + data.decks[n].length + ")";
+      if (n === data.current) o.selected = true; $("deckSel").appendChild(o);
+    });
+  }
+  function render(){
+    const d = deck();
+    $("card").classList.remove("flipped");
+    $("deckTag").textContent = data.current;
+    const total = order.length;
+    const finished = total > 0 && i >= total;
+    const empty = d.length === 0;
+    $("studyArea").hidden = finished;
+    $("doneArea").hidden = !finished;
+    $("studyControls").hidden = finished || empty;
+    $("hint").hidden = finished || empty;
+    if (empty) {
+      $("front").textContent = "This deck has no cards yet. Add one below!";
+      $("back").textContent = "";
+    } else if (!finished) {
+      const c = d[order[i]];
+      $("front").textContent = c[0];
+      $("back").textContent = c[1];
+    } else {
+      $("doneTitle").textContent = again.size === 0 ? "Perfect! 🎉" : "Deck done!";
+      $("doneText").textContent = "You got " + good.size + " of " + total + " right." + (again.size ? " " + again.size + " to practice again." : "");
+      $("retryMissed").hidden = again.size === 0;
+    }
+    $("pos").textContent = empty ? "0 / 0" : Math.min(i + 1, total) + " / " + total;
+    $("barFill").style.width = total ? ((good.size + again.size) / total * 100) + "%" : "0";
+    $("nGood").textContent = good.size; $("nAgain").textContent = again.size;
+    renderList(); renderDeckSel();
+  }
+  function renderList(){
+    const ul = $("list"); ul.innerHTML = "";
+    const d = deck();
+    if (!d.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "No cards yet."; ul.appendChild(li); return; }
+    d.forEach((c, k) => {
+      const li = document.createElement("li");
+      const q = document.createElement("span"); q.className = "q"; q.textContent = c[0];
+      const a = document.createElement("span"); a.className = "a"; a.textContent = c[1];
+      const del = document.createElement("button"); del.className = "ghost"; del.type = "button"; del.textContent = "✕";
+      del.setAttribute("aria-label", "Delete card " + c[0]);
+      del.onclick = () => { d.splice(k, 1); save(); startSession(); };
+      li.append(q, a, del); ul.appendChild(li);
+    });
+  }
+  function flip(){ if (deck().length && i < order.length) $("card").classList.toggle("flipped"); }
+  function mark(ok){
+    if (i >= order.length || !deck().length) return;
+    const idx = order[i];
+    (ok ? good : again).add(idx); (ok ? again : good).delete(idx);
+    i++; render();
+  }
+
+  $("card").addEventListener("click", flip);
+  $("goodBtn").onclick = () => mark(true);
+  $("againBtn").onclick = () => mark(false);
+  $("prevBtn").onclick = () => { if (i > 0) { i--; render(); } };
+  $("shuffleBtn").onclick = () => {
+    const a = deck().map((_, k) => k);
+    for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; }
+    startSession(a);
+  };
+  $("retryMissed").onclick = () => startSession([...again]);
+  $("restartAll").onclick = () => startSession();
+  $("deckSel").onchange = e => { data.current = e.target.value; save(); $("confirmDel").hidden = true; startSession(); };
+  $("addForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const q = $("qIn").value.trim(), a = $("aIn").value.trim();
+    if (!q || !a) return;
+    deck().push([q, a]); save();
+    $("qIn").value = ""; $("aIn").value = ""; $("qIn").focus();
+    startSession();
+  });
+  $("makeDeck").onclick = () => {
+    const n = $("newDeck").value.trim().slice(0, 40);
+    if (!n) { $("newDeck").focus(); return; }
+    if (!data.decks[n]) data.decks[n] = [];
+    data.current = n; $("newDeck").value = ""; save(); startSession(); $("qIn").focus();
+  };
+  $("delDeck").onclick = () => { $("delName").textContent = data.current; $("confirmDel").hidden = false; };
+  $("noDel").onclick = () => { $("confirmDel").hidden = true; };
+  $("yesDel").onclick = () => {
+    delete data.decks[data.current];
+    data.current = null; fixCurrent();
+    $("confirmDel").hidden = true; save(); startSession();
+  };
+  document.addEventListener("keydown", e => {
+    if ($("app").hidden) return;
+    if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (e.key === " " || e.key === "Enter") { if (e.target.tagName === "BUTTON") return; e.preventDefault(); flip(); }
+    else if (e.key === "ArrowRight") mark(true);
+    else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
+  });
+
+  /* ---------- accounts ---------- */
+  const configured = typeof firebase !== "undefined" && firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("PASTE");
+  if (!configured) {
+    $("loadingMsg").hidden = true;
+    $("setupMsg").hidden = false;
+    return;
+  }
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  let mode = "login"; // "login" | "signup" | "reset"
+  function setMode(m){
+    mode = m;
+    $("tabLogin").setAttribute("aria-selected", m === "login");
+    $("tabSignup").setAttribute("aria-selected", m === "signup");
+    $("nameWrap").hidden = m !== "signup";
+    $("pwWrap").hidden = m === "reset";
+    $("pwIn").autocomplete = m === "signup" ? "new-password" : "current-password";
+    $("authTitle").textContent = m === "login" ? "Welcome back!" : m === "signup" ? "Make your account" : "Reset your password";
+    $("authBtn").textContent = m === "login" ? "Log in" : m === "signup" ? "Create account" : "Send reset email";
+    $("forgotBtn").textContent = m === "reset" ? "Back to log in" : "Forgot your password?";
+    showMsg("");
+  }
+  function showMsg(text, ok){
+    $("authMsg").textContent = text;
+    $("authMsg").className = "msg " + (ok ? "ok" : "err");
+    $("authMsg").hidden = !text;
+  }
+  function friendlyError(e){
+    const c = (e && e.code) || "";
+    if (/invalid-credential|wrong-password|user-not-found|invalid-login/.test(c)) return "That email or password isn't right.";
+    if (c.includes("email-already-in-use")) return "There's already an account with that email. Try logging in.";
+    if (c.includes("weak-password")) return "Your password needs at least 6 characters.";
+    if (c.includes("invalid-email")) return "That doesn't look like an email address.";
+    if (c.includes("too-many-requests")) return "Too many tries. Wait a few minutes and try again.";
+    if (c.includes("network")) return "Can't connect. Check your internet.";
+    return "Something went wrong. Try again.";
+  }
+  $("tabLogin").onclick = () => setMode("login");
+  $("tabSignup").onclick = () => setMode("signup");
+  $("forgotBtn").onclick = () => setMode(mode === "reset" ? "login" : "reset");
+
+  $("authForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const name = $("nameIn").value.trim(), email = $("emailIn").value.trim(), pw = $("pwIn").value;
+    if (!email) return showMsg("Type your email first.");
+    if (mode !== "reset" && !pw) return showMsg("Type your password.");
+    if (mode === "signup" && !name) return showMsg("Type your name.");
+    $("authBtn").disabled = true;
+    try {
+      if (mode === "login") {
+        await auth.signInWithEmailAndPassword(email, pw);
+      } else if (mode === "signup") {
+        const cred = await auth.createUserWithEmailAndPassword(email, pw);
+        await cred.user.updateProfile({ displayName: name });
+        $("whoName").textContent = name;
+      } else {
+        await auth.sendPasswordResetEmail(email);
+        showMsg("Check your email for a link to make a new password.", true);
+      }
+    } catch (err) {
+      showMsg(friendlyError(err));
+    }
+    $("authBtn").disabled = false;
+  });
+
+  $("logoutBtn").onclick = () => auth.signOut();
+
+  auth.onAuthStateChanged(async u => {
+    if (unsub) { unsub(); unsub = null; }
+    ref = null;
+    if (!u) {
+      $("app").hidden = true; $("login").hidden = false;
+      $("loadingMsg").hidden = true; $("authArea").hidden = false;
+      $("pwIn").value = "";
+      return;
+    }
+    $("loadingMsg").hidden = false; $("loadingMsg").textContent = "Loading your cards…";
+    $("authArea").hidden = true;
+    ref = db.collection("users").doc(u.uid);
+    let snap;
+    try { snap = await ref.get(); }
+    catch (e) {
+      $("loadingMsg").textContent = "Couldn't load your cards. Check your internet, then refresh the page.";
+      return;
+    }
+    data = snap.exists ? fromDoc(snap.data()) : clone(sample);
+    fixCurrent();
+    $("whoName").textContent = u.displayName || (u.email || "").split("@")[0] || "there";
+    $("login").hidden = true; $("app").hidden = false;
+    startSession();
+    if (!snap.exists) save(); else lastJSON = JSON.stringify(snap.data());
+    unsub = ref.onSnapshot(s => {
+      if (!s.exists || s.metadata.hasPendingWrites || writing) return;
+      const j = JSON.stringify(s.data());
+      if (j === lastJSON) return;
+      lastJSON = j; data = fromDoc(s.data()); fixCurrent(); startSession();
+    }, () => {});
+  });
+})();
+</script>
+</body>
+</html>
