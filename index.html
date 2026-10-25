@@ -150,6 +150,14 @@ ul.list li.empty { background: transparent; color: var(--muted); display: block;
 .who { font-size: .95rem; }
 .ro { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: var(--card); border-radius: 8px; padding: 10px 12px; font-size: .95rem; }
 ul.classes { max-height: none; }
+.inbox { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; background: var(--card); border-radius: 10px; border-left: 4px solid var(--accent); padding: 12px 14px; box-shadow: var(--shadow); }
+.inbox p { margin: 2px 0 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.inbox > div:first-child { min-width: 0; flex: 1; }
+.inboxBtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.shareArea { display: flex; flex-direction: column; gap: 10px; }
+.shareArea > button { align-self: flex-start; }
+.shareBox { background: var(--card); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; font-size: .95rem; }
+.shareBox input { font-size: .9rem; }
 ul.list li.classItem { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; }
 .classTop { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; align-items: baseline; }
 .classTop b { font-size: 1.05rem; overflow-wrap: anywhere; }
@@ -228,6 +236,13 @@ button.google {
     </div>
   </header>
   <p class="sync" id="syncNote">☁ Saved to your account</p>
+  <div class="inbox" id="inbox" hidden>
+    <div><span class="small">Shared deck</span><p id="inboxText"></p></div>
+    <div class="inboxBtns">
+      <button class="primary" id="inAdd" type="button">Add to my decks</button>
+      <button class="ghost" id="inNo" type="button">No thanks</button>
+    </div>
+  </div>
 
   <div class="progress">
     <span id="pos">1 / 1</span>
@@ -278,6 +293,24 @@ button.google {
       <button id="makeDeck" type="button">New deck</button>
       <button class="ghost" id="delDeck" type="button">Delete this deck</button>
     </div>
+    <div class="shareArea" id="shareArea">
+      <button type="button" id="shareBtn">🔗 Share this deck</button>
+      <div class="shareBox" id="shareBox" hidden>
+        <span>Anyone with this link or code can get a copy of "<b id="shareName"></b>". Changes you make are shared too.</span>
+        <div class="deckrow">
+          <input id="shareLink" readonly aria-label="Share link">
+          <button type="button" id="copyLinkBtn">Copy link</button>
+        </div>
+        <div class="codeRow">Code: <span class="code" id="shareCode"></span>
+          <button type="button" class="ghost" id="stopShareBtn">Stop sharing</button>
+        </div>
+      </div>
+    </div>
+    <div class="deckrow">
+      <input id="deckCodeIn" maxlength="6" placeholder="Got a deck code? Type it here" aria-label="Deck code" autocomplete="off">
+      <button id="openCodeBtn" type="button">Open deck</button>
+    </div>
+    <p class="msg" id="shareMsg" hidden></p>
     <div class="confirm" id="confirmDel" hidden>
       <span>Delete "<b id="delName"></b>" and all its cards?</span>
       <button class="again" id="yesDel" type="button">Yes, delete</button>
@@ -336,6 +369,7 @@ const firebaseConfig = {
 
   const toDoc = d => ({
     current: d.current,
+    shares: d.shares || {},
     decks: Object.keys(d.decks).map(n => ({ name: n, cards: d.decks[n].map(c => ({ q: c[0], a: c[1] })) }))
   });
   const fromDoc = d => {
@@ -343,7 +377,9 @@ const firebaseConfig = {
     (Array.isArray(d && d.decks) ? d.decks : []).forEach(x => {
       if (x && typeof x.name === "string") decks[x.name] = (Array.isArray(x.cards) ? x.cards : []).map(c => [String((c && c.q) || ""), String((c && c.a) || "")]);
     });
-    return { current: d && d.current, decks };
+    const shares = {};
+    if (d && d.shares && typeof d.shares === "object") for (const k in d.shares) if (typeof d.shares[k] === "string") shares[k] = d.shares[k];
+    return { current: d && d.current, decks, shares };
   };
   const fixCurrent = () => {
     if (!data.decks || !Object.keys(data.decks).length) data.decks = { "My Deck": [] };
@@ -384,7 +420,11 @@ const firebaseConfig = {
       .then(() => { $("syncNote").textContent = "☁ Saved to the class"; })
       .catch(() => { $("syncNote").textContent = "Couldn't save the class deck. Check your internet."; });
   }
-  const saveSel = () => sel.t === "me" ? save() : saveClass(sel.code);
+  const saveSel = () => {
+    if (sel.t !== "me") return saveClass(sel.code);
+    save();
+    if (data.shares && data.shares[sel.name]) updateShare(sel.name);
+  };
 
   /* ---------- studying ---------- */
   let order = [], i = 0, good = new Set(), again = new Set();
@@ -452,6 +492,7 @@ const firebaseConfig = {
       $("roText").textContent = ed ? "" : "Shared by " + c.ownerName + " in " + c.name + ". Only they can change it.";
     }
     $("confirmDel").hidden = true;
+    renderShare();
     renderList(); renderDeckSel();
   }
   function renderList(){
@@ -524,6 +565,10 @@ const firebaseConfig = {
   $("noDel").onclick = () => { $("confirmDel").hidden = true; };
   $("yesDel").onclick = () => {
     if (sel.t === "me") {
+      if (data.shares && data.shares[sel.name]) {
+        db.collection("sharedDecks").doc(data.shares[sel.name]).delete().catch(() => {});
+        delete data.shares[sel.name];
+      }
       delete data.decks[sel.name];
       data.current = null; fixCurrent(); save();
     } else if (editable()) {
@@ -540,6 +585,107 @@ const firebaseConfig = {
     else if (e.key === "ArrowRight") mark(true);
     else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
   });
+
+  /* ---------- sharing single decks ---------- */
+  const pendingDeck = (new URLSearchParams(location.search).get("deck") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  let incoming = null;
+  const shareBody = n => ({
+    name: n, cards: data.decks[n].map(c => ({ q: c[0], a: c[1] })),
+    ownerUid: uid, ownerName: myName || "someone",
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  const shareLinkFor = code => location.origin + location.pathname + "?deck=" + code;
+  function shareMsg(text, ok){
+    $("shareMsg").textContent = text;
+    $("shareMsg").className = "msg " + (ok ? "ok" : "err");
+    $("shareMsg").hidden = !text;
+  }
+  function renderShare(){
+    const mineDeck = sel.t === "me";
+    const code = mineDeck && data.shares && data.shares[sel.name];
+    $("shareArea").hidden = !mineDeck;
+    $("shareBtn").hidden = !!code;
+    $("shareBox").hidden = !code;
+    if (code) {
+      $("shareName").textContent = sel.name;
+      $("shareLink").value = shareLinkFor(code);
+      $("shareCode").textContent = code;
+    }
+  }
+  function updateShare(n){
+    const code = data.shares[n];
+    if (code && data.decks[n]) db.collection("sharedDecks").doc(code).set(shareBody(n)).catch(() => {});
+  }
+  $("shareBtn").onclick = async () => {
+    if (sel.t !== "me") return;
+    const n = sel.name;
+    $("shareBtn").disabled = true; shareMsg("");
+    try {
+      let r, tries = 0;
+      do { r = db.collection("sharedDecks").doc(newCode()); tries++; } while ((await r.get()).exists && tries < 6);
+      await r.set(shareBody(n));
+      data.shares = data.shares || {};
+      data.shares[n] = r.id;
+      save(); renderShare();
+    } catch (e) { shareMsg(classError(e, "Couldn't share the deck. Try again.")); }
+    $("shareBtn").disabled = false;
+  };
+  $("copyLinkBtn").onclick = () => {
+    const done = () => { $("copyLinkBtn").textContent = "Copied!"; setTimeout(() => $("copyLinkBtn").textContent = "Copy link", 1500); };
+    try { navigator.clipboard.writeText($("shareLink").value).then(done, () => $("shareLink").select()); }
+    catch (_) { $("shareLink").select(); }
+  };
+  $("shareLink").addEventListener("focus", e => e.target.select());
+  $("stopShareBtn").onclick = async () => {
+    const n = sel.name, code = data.shares && data.shares[n];
+    if (!code) return;
+    try {
+      await db.collection("sharedDecks").doc(code).delete();
+      delete data.shares[n]; save(); renderShare();
+      shareMsg("Stopped sharing \"" + n + "\". The old link won't work anymore.", true);
+    } catch (e) { shareMsg(classError(e, "Couldn't stop sharing. Try again.")); }
+  };
+  async function openShared(code){
+    shareMsg("");
+    try {
+      const s = await db.collection("sharedDecks").doc(code).get();
+      if (!s.exists) {
+        $("inbox").hidden = true;
+        shareMsg("No deck found for code " + code + ". It might not be shared anymore.");
+        return;
+      }
+      const x = s.data();
+      incoming = {
+        name: String(x.name || "Shared deck").slice(0, 40),
+        cards: (Array.isArray(x.cards) ? x.cards : []).map(c => [String((c && c.q) || ""), String((c && c.a) || "")])
+      };
+      const n = incoming.cards.length;
+      $("inboxText").textContent = (x.ownerUid === uid ? "Your deck" : (x.ownerName || "Someone") + " shared")
+        + " \"" + incoming.name + "\" (" + n + (n === 1 ? " card" : " cards") + ")";
+      $("inbox").hidden = false;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) { shareMsg(classError(e, "Couldn't open that deck. Try again.")); }
+  }
+  function clearDeckParam(){
+    try { if (location.search) history.replaceState(null, "", location.pathname); } catch (_) {}
+  }
+  $("inAdd").onclick = () => {
+    if (!incoming) return;
+    let n = incoming.name, k = 2;
+    while (data.decks[n]) n = incoming.name + " (" + k++ + ")";
+    data.decks[n] = incoming.cards;
+    data.current = n; sel = { t: "me", name: n };
+    incoming = null; $("inbox").hidden = true; clearDeckParam();
+    save(); startSession();
+  };
+  $("inNo").onclick = () => { incoming = null; $("inbox").hidden = true; clearDeckParam(); };
+  $("openCodeBtn").onclick = () => {
+    const code = $("deckCodeIn").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 6) { shareMsg("Deck codes have 6 letters and numbers."); return; }
+    $("deckCodeIn").value = "";
+    openShared(code);
+  };
+  $("deckCodeIn").addEventListener("keydown", e => { if (e.key === "Enter") $("openCodeBtn").click(); });
 
   /* ---------- classes ---------- */
   const sortedCodes = () => Object.keys(classes).sort((a, b) => classes[a].name.localeCompare(classes[b].name));
@@ -801,6 +947,7 @@ const firebaseConfig = {
     $("classMsg").hidden = true;
     startSession();
     watchClasses();
+    if (pendingDeck.length === 6) openShared(pendingDeck);
     if (!snap.exists) save(); else lastJSON = JSON.stringify(snap.data());
     unsub = ref.onSnapshot(s => {
       if (!s.exists || s.metadata.hasPendingWrites || writing) return;
