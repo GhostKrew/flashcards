@@ -164,6 +164,22 @@ ul.list li.empty { background: transparent; color: var(--muted); display: block;
 .chips button { padding: 6px 12px; font-size: .9rem; border-radius: 99px; }
 .chips .none { color: var(--muted); font-size: .9rem; }
 
+/* full screen study */
+.studyBox { display: flex; flex-direction: column; gap: 22px; }
+.exitFs { display: none; }
+body.focus { overflow: hidden; }
+body.focus .side, body.focus header, body.focus .sync, body.focus #inbox, body.focus section.editor { display: none !important; }
+body.focus .studyBox {
+  position: fixed; inset: 0; z-index: 50; background: var(--desk); justify-content: center;
+  padding: max(20px, env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) max(20px, env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+}
+body.focus .exitFs { display: block; position: absolute; top: max(12px, env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); }
+body.focus .progress, body.focus .controls, body.focus .hint { width: min(100%, 1000px); margin-left: auto; margin-right: auto; }
+body.focus .stage, body.focus .done { width: min(100%, 1000px, calc((100vh - 230px) * 5 / 3)); margin: 0 auto; }
+body.focus .face .txt { font-size: clamp(1.8rem, 5vw, 3.8rem); }
+body.focus .face.back .txt { font-size: clamp(1.5rem, 4.2vw, 3.2rem); }
+body.focus #fsBtn { display: none; }
+
 /* login */
 .login { min-height: 80vh; display: flex; align-items: center; justify-content: center; }
 .loginCard {
@@ -290,6 +306,8 @@ button.google {
     </div>
   </div>
 
+  <div class="studyBox" id="studyBox">
+  <button type="button" class="ghost exitFs" id="exitFs">✕ Exit full screen</button>
   <div class="progress">
     <span id="pos">1 / 1</span>
     <div class="bar"><i id="barFill"></i></div>
@@ -313,13 +331,15 @@ button.google {
     </div>
   </div>
 
-  <p class="hint" id="hint">Tap the card to flip it · <kbd>Space</kbd> flip · <kbd>←</kbd> <kbd>→</kbd> move</p>
+  <p class="hint" id="hint">Tap the card to flip it · <kbd>Space</kbd> flip · <kbd>←</kbd> <kbd>→</kbd> move · <kbd>F</kbd> full screen</p>
 
   <div class="controls" id="studyControls">
     <button id="prevBtn" aria-label="Previous card">← Back</button>
     <button class="again" id="againBtn">Again</button>
     <button class="good" id="goodBtn">Got it ✓</button>
     <button id="shuffleBtn">Shuffle</button>
+    <button id="fsBtn" type="button" aria-label="Full screen">⛶ Full screen</button>
+  </div>
   </div>
 
   <section class="editor">
@@ -631,13 +651,40 @@ const firebaseConfig = {
   document.addEventListener("keydown", e => {
     if ($("app").hidden) return;
     if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (e.key === "Escape" && inFocus()) { exitFocus(); return; }
+    if ((e.key === "f" || e.key === "F") && !e.metaKey && !e.ctrlKey && !$("viewHome").hidden) { inFocus() ? exitFocus() : enterFocus(); return; }
     if (e.key === " " || e.key === "Enter") { if (e.target.tagName === "BUTTON") return; e.preventDefault(); flip(); }
     else if (e.key === "ArrowRight") mark(true);
     else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
   });
 
+  /* ---------- full screen ---------- */
+  const inFocus = () => document.body.classList.contains("focus");
+  function enterFocus(){
+    document.body.classList.add("focus");
+    const el = document.documentElement;
+    try {
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch (_) {}
+    $("card").focus();
+  }
+  function exitFocus(){
+    document.body.classList.remove("focus");
+    try {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else if (document.webkitFullscreenElement) document.webkitExitFullscreen();
+    } catch (_) {}
+  }
+  const onFsChange = () => { if (!document.fullscreenElement && !document.webkitFullscreenElement) document.body.classList.remove("focus"); };
+  document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
+  $("fsBtn").onclick = enterFocus;
+  $("exitFs").onclick = exitFocus;
+
   /* ---------- side bar ---------- */
   function showView(v){
+    if (inFocus()) exitFocus();
     $("viewHome").hidden = v !== "home";
     $("viewClasses").hidden = v !== "classes";
     document.querySelector("header .deckpick label").hidden = v !== "home";
@@ -993,7 +1040,7 @@ const firebaseConfig = {
   };
   auth.getRedirectResult().catch(err => showMsg(friendlyError(err)));
 
-  $("logoutBtn").onclick = () => auth.signOut();
+  $("logoutBtn").onclick = () => { exitFocus(); auth.signOut(); };
   $("sideLogout").onclick = () => auth.signOut();
 
   auth.onAuthStateChanged(async u => {
