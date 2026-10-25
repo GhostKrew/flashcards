@@ -129,6 +129,41 @@ ul.list li.empty { background: transparent; color: var(--muted); display: block;
 .deckrow input { flex: 1; min-width: 140px; }
 .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .9rem; }
 
+/* sidebar + views */
+.view { display: flex; flex-direction: column; gap: 22px; }
+.side {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; justify-content: center; gap: 6px;
+  background: var(--card); border-top: 1px solid var(--line);
+  padding: 6px max(16px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.brand, .sideUser { display: none; }
+.navBtn {
+  flex: 1; max-width: 200px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  border: 0; background: transparent; color: var(--muted); padding: 6px 10px; font-size: .8rem; border-radius: 10px;
+}
+.navBtn:hover { background: var(--desk-2); }
+.navBtn[aria-current="page"] { color: var(--accent); background: var(--desk-2); }
+.shell { padding-bottom: 72px; }
+@media (min-width: 860px) {
+  .shell { padding-bottom: 0; padding-left: 230px; }
+  .side {
+    top: 0; right: auto; width: 214px; flex-direction: column; justify-content: flex-start; gap: 4px;
+    border-top: 0; border-right: 1px solid var(--line);
+    padding: max(22px, env(safe-area-inset-top, 0px)) 12px 20px max(12px, env(safe-area-inset-left, 0px));
+  }
+  .brand { display: block; font-weight: 800; font-size: 1.3rem; letter-spacing: -.02em; padding: 0 8px 18px; }
+  .brand span { font-family: var(--f-card); font-weight: 400; color: var(--margin); letter-spacing: 0; }
+  .navBtn { flex: none; max-width: none; flex-direction: row; gap: 12px; font-size: 1rem; padding: 10px 12px; }
+  .sideUser { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: auto; padding: 0 8px; font-size: .95rem; overflow-wrap: anywhere; }
+  .sideUser button { padding-left: 0; }
+  header h1, header .who, header #logoutBtn { display: none; }
+  header { justify-content: flex-end; }
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { padding: 6px 12px; font-size: .9rem; border-radius: 99px; }
+.chips .none { color: var(--muted); font-size: .9rem; }
+
 /* login */
 .login { min-height: 80vh; display: flex; align-items: center; justify-content: center; }
 .loginCard {
@@ -225,7 +260,17 @@ button.google {
 </div>
 
 <!-- ====== MAIN APP ====== -->
-<div class="wrap" id="app" hidden>
+<div class="shell" id="app" hidden>
+  <nav class="side" aria-label="Main">
+    <div class="brand">Flashcards <span>by Alex</span></div>
+    <button type="button" class="navBtn" data-view="home" aria-current="page"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg><span>Home</span></button>
+    <button type="button" class="navBtn" data-view="classes"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.6c2.6.2 4.4 1.9 5 5.4"/></svg><span>Classes</span></button>
+    <div class="sideUser">
+      <span>Hi, <b id="sideName"></b>!</span>
+      <button class="ghost" id="sideLogout" type="button">Log out</button>
+    </div>
+  </nav>
+<div class="wrap">
   <header>
     <h1>Flashcards <span>by Alex</span></h1>
     <div class="deckpick">
@@ -236,6 +281,7 @@ button.google {
     </div>
   </header>
   <p class="sync" id="syncNote">☁ Saved to your account</p>
+<div class="view" id="viewHome">
   <div class="inbox" id="inbox" hidden>
     <div><span class="small">Shared deck</span><p id="inboxText"></p></div>
     <div class="inboxBtns">
@@ -318,6 +364,8 @@ button.google {
     </div>
   </section>
 
+</div>
+<div class="view" id="viewClasses" hidden>
   <section class="editor">
     <h3>Classes</h3>
     <p class="note">Make a class to share decks with everyone who joins it. Class decks show up in everyone's Deck menu.</p>
@@ -332,6 +380,8 @@ button.google {
     </div>
     <p class="msg" id="classMsg" hidden></p>
   </section>
+</div>
+</div>
 </div>
 
 <script>
@@ -586,6 +636,19 @@ const firebaseConfig = {
     else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
   });
 
+  /* ---------- side bar ---------- */
+  function showView(v){
+    $("viewHome").hidden = v !== "home";
+    $("viewClasses").hidden = v !== "classes";
+    document.querySelector("header .deckpick label").hidden = v !== "home";
+    $("deckSel").hidden = v !== "home";
+    document.querySelectorAll(".navBtn").forEach(b => {
+      if (b.dataset.view === v) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll(".navBtn").forEach(b => b.addEventListener("click", () => showView(b.dataset.view)));
+
   /* ---------- sharing single decks ---------- */
   const pendingDeck = (new URLSearchParams(location.search).get("deck") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   let incoming = null;
@@ -647,6 +710,7 @@ const firebaseConfig = {
   };
   async function openShared(code){
     shareMsg("");
+    showView("home");
     try {
       const s = await db.collection("sharedDecks").doc(code).get();
       if (!s.exists) {
@@ -762,7 +826,20 @@ const firebaseConfig = {
           .catch(e => classMsg(classError(e, "Couldn't leave the class. Try again.")));
         act.appendChild(leave);
       }
-      li.append(top, codeRow, act);
+      const chips = document.createElement("div"); chips.className = "chips";
+      const names = Object.keys(c.decks);
+      if (!names.length) {
+        const none = document.createElement("span"); none.className = "none";
+        none.textContent = mine ? "No decks yet. Share one below." : "No decks yet.";
+        chips.appendChild(none);
+      }
+      names.forEach(n => {
+        const b = document.createElement("button"); b.type = "button";
+        b.textContent = "Study " + n;
+        b.onclick = () => { sel = { t: "class", code, name: n }; startSession(); showView("home"); };
+        chips.appendChild(b);
+      });
+      li.append(top, codeRow, chips, act);
       ul.appendChild(li);
     });
   }
@@ -878,7 +955,7 @@ const firebaseConfig = {
       } else if (mode === "signup") {
         const cred = await auth.createUserWithEmailAndPassword(email, pw);
         await cred.user.updateProfile({ displayName: name });
-        $("whoName").textContent = name; myName = name;
+        $("whoName").textContent = name; $("sideName").textContent = name; myName = name;
       } else {
         await auth.sendPasswordResetEmail(email);
         showMsg("Check your email for a link to make a new password.", true);
@@ -917,6 +994,7 @@ const firebaseConfig = {
   auth.getRedirectResult().catch(err => showMsg(friendlyError(err)));
 
   $("logoutBtn").onclick = () => auth.signOut();
+  $("sideLogout").onclick = () => auth.signOut();
 
   auth.onAuthStateChanged(async u => {
     if (unsub) { unsub(); unsub = null; }
@@ -943,6 +1021,8 @@ const firebaseConfig = {
     myName = u.displayName || (u.email || "").split("@")[0] || "";
     sel = { t: "me", name: data.current };
     $("whoName").textContent = myName || "there";
+    $("sideName").textContent = myName || "there";
+    showView("home");
     $("login").hidden = true; $("app").hidden = false;
     $("classMsg").hidden = true;
     startSession();
