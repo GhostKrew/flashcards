@@ -148,6 +148,17 @@ ul.list li.empty { background: transparent; color: var(--muted); display: block;
 .setup { background: var(--desk-2); border-radius: 8px; padding: 12px 14px; font-size: .9rem; line-height: 1.45; }
 .setup b { color: var(--again); }
 .who { font-size: .95rem; }
+.ro { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: var(--card); border-radius: 8px; padding: 10px 12px; font-size: .95rem; }
+ul.classes { max-height: none; }
+ul.list li.classItem { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; }
+.classTop { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; align-items: baseline; }
+.classTop b { font-size: 1.05rem; overflow-wrap: anywhere; }
+.classMeta { color: var(--muted); font-size: .85rem; }
+.codeRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .9rem; }
+.code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 700; letter-spacing: .15em; font-size: 1.05rem; }
+.classActions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.classActions select { flex: 1; min-width: 140px; }
+.classActions button, .codeRow button { padding: 7px 12px; font-size: .9rem; }
 button.google {
   width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
   margin-top: 12px; padding: 11px 16px;
@@ -251,7 +262,11 @@ button.google {
   </div>
 
   <section class="editor">
-    <h3>Make your own cards</h3>
+    <h3 id="editorTitle">Make your own cards</h3>
+    <div class="ro" id="roNote" hidden>
+      <span id="roText"></span>
+      <button type="button" id="copyBtn">Copy to my decks</button>
+    </div>
     <form class="add" id="addForm">
       <div><label class="small" for="qIn">Front (question)</label><input id="qIn" placeholder="What is 7 × 8?" required></div>
       <div><label class="small" for="aIn">Back (answer)</label><input id="aIn" placeholder="56" required></div>
@@ -268,6 +283,21 @@ button.google {
       <button class="again" id="yesDel" type="button">Yes, delete</button>
       <button id="noDel" type="button">Keep it</button>
     </div>
+  </section>
+
+  <section class="editor">
+    <h3>Classes</h3>
+    <p class="note">Make a class to share decks with everyone who joins it. Class decks show up in everyone's Deck menu.</p>
+    <ul class="list classes" id="classList"></ul>
+    <div class="deckrow">
+      <input id="joinIn" maxlength="6" placeholder="Class code, like K7P2QX" aria-label="Class code" autocomplete="off">
+      <button id="joinBtn" type="button">Join class</button>
+    </div>
+    <div class="deckrow">
+      <input id="classNameIn" maxlength="40" placeholder="New class name, like Room 12 Spelling" aria-label="New class name">
+      <button id="createClassBtn" type="button" class="primary">Make a class</button>
+    </div>
+    <p class="msg" id="classMsg" hidden></p>
   </section>
 </div>
 
@@ -336,26 +366,59 @@ const firebaseConfig = {
     if (dirty) { dirty = false; save(); }
   }
 
+  /* ---------- which deck is open ---------- */
+  let uid = null, myName = "", classes = {}, classUnsub = null;
+  let sel = { t: "me", name: "" };
+  const keyOf = s => JSON.stringify(s.t === "me" ? ["me", s.name] : ["class", s.code, s.name]);
+  const deckOf = s => s.t === "me" ? (data.decks[s.name]) : (classes[s.code] && classes[s.code].decks[s.name]);
+  const deck = () => deckOf(sel) || [];
+  const editable = () => sel.t === "me" || (classes[sel.code] && classes[sel.code].ownerUid === uid);
+  const classDecksBody = c => Object.keys(c.decks).map(n => ({ name: n, cards: c.decks[n].map(x => ({ q: x[0], a: x[1] })) }));
+  const classWrites = {};
+  function saveClass(code){
+    const c = classes[code]; if (!c) return;
+    const body = { decks: classDecksBody(c) };
+    $("syncNote").textContent = "Saving…";
+    classWrites[code] = (classWrites[code] || Promise.resolve())
+      .then(() => db.collection("classes").doc(code).update(body))
+      .then(() => { $("syncNote").textContent = "☁ Saved to the class"; })
+      .catch(() => { $("syncNote").textContent = "Couldn't save the class deck. Check your internet."; });
+  }
+  const saveSel = () => sel.t === "me" ? save() : saveClass(sel.code);
+
   /* ---------- studying ---------- */
   let order = [], i = 0, good = new Set(), again = new Set();
-  const deck = () => data.decks[data.current];
 
   function startSession(indices){
+    fixCurrent();
+    if (!deckOf(sel)) sel = { t: "me", name: data.current };
     order = indices || deck().map((_, k) => k);
     i = 0; good = new Set(); again = new Set();
     render();
   }
   function renderDeckSel(){
-    $("deckSel").innerHTML = "";
-    Object.keys(data.decks).forEach(n => {
-      const o = document.createElement("option"); o.value = n; o.textContent = n + " (" + data.decks[n].length + ")";
-      if (n === data.current) o.selected = true; $("deckSel").appendChild(o);
+    const s = $("deckSel"); s.innerHTML = "";
+    const addOpt = (parent, label, key) => {
+      const o = document.createElement("option"); o.value = key; o.textContent = label;
+      if (key === keyOf(sel)) o.selected = true; parent.appendChild(o);
+    };
+    const mine = document.createElement("optgroup"); mine.label = "My decks";
+    Object.keys(data.decks).forEach(n => addOpt(mine, n + " (" + data.decks[n].length + ")", keyOf({ t: "me", name: n })));
+    s.appendChild(mine);
+    sortedCodes().forEach(code => {
+      const c = classes[code];
+      const g = document.createElement("optgroup"); g.label = "Class: " + c.name;
+      const names = Object.keys(c.decks);
+      if (!names.length) { const o = document.createElement("option"); o.disabled = true; o.textContent = "(no decks yet)"; g.appendChild(o); }
+      names.forEach(n => addOpt(g, n + " (" + c.decks[n].length + ")", keyOf({ t: "class", code, name: n })));
+      s.appendChild(g);
     });
   }
   function render(){
     const d = deck();
+    const ed = editable();
     $("card").classList.remove("flipped");
-    $("deckTag").textContent = data.current;
+    $("deckTag").textContent = sel.name;
     const total = order.length;
     const finished = total > 0 && i >= total;
     const empty = d.length === 0;
@@ -364,7 +427,7 @@ const firebaseConfig = {
     $("studyControls").hidden = finished || empty;
     $("hint").hidden = finished || empty;
     if (empty) {
-      $("front").textContent = "This deck has no cards yet. Add one below!";
+      $("front").textContent = ed ? "This deck has no cards yet. Add one below!" : "This class deck has no cards yet.";
       $("back").textContent = "";
     } else if (!finished) {
       const c = d[order[i]];
@@ -378,20 +441,35 @@ const firebaseConfig = {
     $("pos").textContent = empty ? "0 / 0" : Math.min(i + 1, total) + " / " + total;
     $("barFill").style.width = total ? ((good.size + again.size) / total * 100) + "%" : "0";
     $("nGood").textContent = good.size; $("nAgain").textContent = again.size;
+
+    $("addForm").hidden = !ed;
+    $("delDeck").hidden = !ed;
+    $("roNote").hidden = ed;
+    if (sel.t === "me") $("editorTitle").textContent = "Make your own cards";
+    else {
+      const c = classes[sel.code];
+      $("editorTitle").textContent = ed ? "Edit class deck (" + c.name + ")" : "Class deck";
+      $("roText").textContent = ed ? "" : "Shared by " + c.ownerName + " in " + c.name + ". Only they can change it.";
+    }
+    $("confirmDel").hidden = true;
     renderList(); renderDeckSel();
   }
   function renderList(){
     const ul = $("list"); ul.innerHTML = "";
-    const d = deck();
+    const d = deck(), ed = editable();
     if (!d.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "No cards yet."; ul.appendChild(li); return; }
     d.forEach((c, k) => {
       const li = document.createElement("li");
       const q = document.createElement("span"); q.className = "q"; q.textContent = c[0];
       const a = document.createElement("span"); a.className = "a"; a.textContent = c[1];
-      const del = document.createElement("button"); del.className = "ghost"; del.type = "button"; del.textContent = "✕";
-      del.setAttribute("aria-label", "Delete card " + c[0]);
-      del.onclick = () => { d.splice(k, 1); save(); startSession(); };
-      li.append(q, a, del); ul.appendChild(li);
+      li.append(q, a);
+      if (ed) {
+        const del = document.createElement("button"); del.className = "ghost"; del.type = "button"; del.textContent = "✕";
+        del.setAttribute("aria-label", "Delete card " + c[0]);
+        del.onclick = () => { d.splice(k, 1); saveSel(); startSession(); };
+        li.appendChild(del);
+      } else li.appendChild(document.createElement("span"));
+      ul.appendChild(li);
     });
   }
   function flip(){ if (deck().length && i < order.length) $("card").classList.toggle("flipped"); }
@@ -413,12 +491,18 @@ const firebaseConfig = {
   };
   $("retryMissed").onclick = () => startSession([...again]);
   $("restartAll").onclick = () => startSession();
-  $("deckSel").onchange = e => { data.current = e.target.value; save(); $("confirmDel").hidden = true; startSession(); };
+  $("deckSel").onchange = e => {
+    let v; try { v = JSON.parse(e.target.value); } catch (_) { return; }
+    if (v[0] === "me") { sel = { t: "me", name: v[1] }; data.current = v[1]; save(); }
+    else sel = { t: "class", code: v[1], name: v[2] };
+    startSession();
+  };
   $("addForm").addEventListener("submit", e => {
     e.preventDefault();
+    if (!editable()) return;
     const q = $("qIn").value.trim(), a = $("aIn").value.trim();
     if (!q || !a) return;
-    deck().push([q, a]); save();
+    deck().push([q, a]); saveSel();
     $("qIn").value = ""; $("aIn").value = ""; $("qIn").focus();
     startSession();
   });
@@ -426,14 +510,28 @@ const firebaseConfig = {
     const n = $("newDeck").value.trim().slice(0, 40);
     if (!n) { $("newDeck").focus(); return; }
     if (!data.decks[n]) data.decks[n] = [];
-    data.current = n; $("newDeck").value = ""; save(); startSession(); $("qIn").focus();
+    data.current = n; sel = { t: "me", name: n };
+    $("newDeck").value = ""; save(); startSession(); $("qIn").focus();
   };
-  $("delDeck").onclick = () => { $("delName").textContent = data.current; $("confirmDel").hidden = false; };
+  $("copyBtn").onclick = () => {
+    let n = sel.name, k = 2;
+    while (data.decks[n]) n = sel.name + " (" + k++ + ")";
+    data.decks[n] = clone(deck());
+    data.current = n; sel = { t: "me", name: n };
+    save(); startSession();
+  };
+  $("delDeck").onclick = () => { $("delName").textContent = sel.name; $("confirmDel").hidden = false; };
   $("noDel").onclick = () => { $("confirmDel").hidden = true; };
   $("yesDel").onclick = () => {
-    delete data.decks[data.current];
-    data.current = null; fixCurrent();
-    $("confirmDel").hidden = true; save(); startSession();
+    if (sel.t === "me") {
+      delete data.decks[sel.name];
+      data.current = null; fixCurrent(); save();
+    } else if (editable()) {
+      delete classes[sel.code].decks[sel.name];
+      saveClass(sel.code);
+    }
+    sel = { t: "me", name: data.current };
+    startSession();
   };
   document.addEventListener("keydown", e => {
     if ($("app").hidden) return;
@@ -442,6 +540,141 @@ const firebaseConfig = {
     else if (e.key === "ArrowRight") mark(true);
     else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
   });
+
+  /* ---------- classes ---------- */
+  const sortedCodes = () => Object.keys(classes).sort((a, b) => classes[a].name.localeCompare(classes[b].name));
+  function classMsg(text, ok){
+    $("classMsg").textContent = text;
+    $("classMsg").className = "msg " + (ok ? "ok" : "err");
+    $("classMsg").hidden = !text;
+  }
+  function classError(e, fallback){
+    const c = (e && e.code) || "";
+    if (c.includes("permission-denied")) return "Firebase blocked this. Make sure the new Firestore rules are published.";
+    if (c.includes("unavailable")) return "Can't connect. Check your internet.";
+    return fallback;
+  }
+  function renderClasses(){
+    const ul = $("classList"); ul.innerHTML = "";
+    const codes = sortedCodes();
+    if (!codes.length) {
+      const li = document.createElement("li"); li.className = "empty";
+      li.textContent = "You're not in any classes yet. Join one with a code, or make your own.";
+      ul.appendChild(li); return;
+    }
+    codes.forEach(code => {
+      const c = classes[code], mine = c.ownerUid === uid;
+      const li = document.createElement("li"); li.className = "classItem";
+
+      const top = document.createElement("div"); top.className = "classTop";
+      const nm = document.createElement("b"); nm.textContent = c.name;
+      const meta = document.createElement("span"); meta.className = "classMeta";
+      const nDecks = Object.keys(c.decks).length;
+      meta.textContent = (mine ? "You made this" : "by " + c.ownerName) + " · " + nDecks + (nDecks === 1 ? " deck" : " decks");
+      top.append(nm, meta);
+
+      const codeRow = document.createElement("div"); codeRow.className = "codeRow";
+      const lab = document.createElement("span"); lab.textContent = "Code:";
+      const cd = document.createElement("span"); cd.className = "code"; cd.textContent = code;
+      codeRow.append(lab, cd);
+      if (mine) {
+        const cp = document.createElement("button"); cp.type = "button"; cp.textContent = "Copy code";
+        cp.onclick = () => {
+          const done = () => { cp.textContent = "Copied!"; setTimeout(() => cp.textContent = "Copy code", 1500); };
+          try { navigator.clipboard.writeText(code).then(done, () => {}); } catch (_) {}
+        };
+        codeRow.appendChild(cp);
+      }
+
+      const act = document.createElement("div"); act.className = "classActions";
+      if (mine) {
+        const pick = document.createElement("select"); pick.setAttribute("aria-label", "Pick one of your decks to share with " + c.name);
+        Object.keys(data.decks).forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; pick.appendChild(o); });
+        const add = document.createElement("button"); add.type = "button"; add.className = "primary"; add.textContent = "Share deck";
+        add.onclick = () => {
+          const n0 = pick.value; if (!n0 || !data.decks[n0]) return;
+          let n = n0, k = 2; while (c.decks[n]) n = n0 + " (" + k++ + ")";
+          c.decks[n] = clone(data.decks[n0]);
+          saveClass(code); renderDeckSel(); renderClasses();
+          classMsg("Shared \"" + n + "\" with " + c.name + ". Everyone in the class can study it now.", true);
+        };
+        const del = document.createElement("button"); del.type = "button"; del.className = "ghost"; del.textContent = "Delete class";
+        del.onclick = () => {
+          act.innerHTML = "";
+          const q = document.createElement("span"); q.textContent = "Delete " + c.name + " for everyone?";
+          const yes = document.createElement("button"); yes.type = "button"; yes.className = "again"; yes.textContent = "Yes, delete";
+          const no = document.createElement("button"); no.type = "button"; no.textContent = "Keep it";
+          yes.onclick = () => db.collection("classes").doc(code).delete().catch(e => classMsg(classError(e, "Couldn't delete the class. Try again.")));
+          no.onclick = renderClasses;
+          act.append(q, yes, no);
+        };
+        act.append(pick, add, del);
+      } else {
+        const leave = document.createElement("button"); leave.type = "button"; leave.className = "ghost"; leave.textContent = "Leave class";
+        leave.onclick = () => db.collection("classes").doc(code)
+          .update({ members: firebase.firestore.FieldValue.arrayRemove(uid) })
+          .catch(e => classMsg(classError(e, "Couldn't leave the class. Try again.")));
+        act.appendChild(leave);
+      }
+      li.append(top, codeRow, act);
+      ul.appendChild(li);
+    });
+  }
+  function watchClasses(){
+    classUnsub = db.collection("classes").where("members", "array-contains", uid).onSnapshot(qs => {
+      const before = JSON.stringify(deckOf(sel) || null);
+      const next = {};
+      qs.docs.forEach(d => {
+        const x = d.data();
+        next[d.id] = {
+          name: String(x.name || "Class"), ownerUid: x.ownerUid, ownerName: String(x.ownerName || "someone"),
+          decks: (d.metadata.hasPendingWrites && classes[d.id]) ? classes[d.id].decks : fromDoc({ decks: x.decks }).decks
+        };
+      });
+      classes = next;
+      if (!deckOf(sel) || JSON.stringify(deckOf(sel)) !== before) startSession();
+      else renderDeckSel();
+      renderClasses();
+    }, e => classMsg(classError(e, "Couldn't load your classes. Refresh the page to try again.")));
+  }
+  const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const newCode = () => Array.from({ length: 6 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
+
+  $("createClassBtn").onclick = async () => {
+    const name = $("classNameIn").value.trim().slice(0, 40);
+    if (!name) { classMsg("Type a name for your class first."); $("classNameIn").focus(); return; }
+    $("createClassBtn").disabled = true;
+    try {
+      let ref2, tries = 0;
+      do { ref2 = db.collection("classes").doc(newCode()); tries++; } while ((await ref2.get()).exists && tries < 6);
+      await ref2.set({
+        name, ownerUid: uid, ownerName: myName || "someone", members: [uid], decks: [],
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      $("classNameIn").value = "";
+      classMsg("Made " + name + "! Its code is " + ref2.id + ". Give that code to anyone who should join, then share a deck.", true);
+    } catch (e) { classMsg(classError(e, "Couldn't make the class. Try again.")); }
+    $("createClassBtn").disabled = false;
+  };
+  $("joinBtn").onclick = async () => {
+    const code = $("joinIn").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 6) { classMsg("Class codes have 6 letters and numbers."); return; }
+    if (classes[code]) { classMsg("You're already in that class."); return; }
+    $("joinBtn").disabled = true;
+    try {
+      const r = db.collection("classes").doc(code);
+      const s = await r.get();
+      if (!s.exists) classMsg("There's no class with that code. Check it and try again.");
+      else {
+        await r.update({ members: firebase.firestore.FieldValue.arrayUnion(uid) });
+        $("joinIn").value = "";
+        classMsg("You joined " + (s.data().name || "the class") + "! Its decks are in the Deck menu.", true);
+      }
+    } catch (e) { classMsg(classError(e, "Couldn't join. Check the code and try again.")); }
+    $("joinBtn").disabled = false;
+  };
+  $("joinIn").addEventListener("keydown", e => { if (e.key === "Enter") $("joinBtn").click(); });
+  $("classNameIn").addEventListener("keydown", e => { if (e.key === "Enter") $("createClassBtn").click(); });
 
   /* ---------- accounts ---------- */
   const configured = typeof firebase !== "undefined" && firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("PASTE");
@@ -499,7 +732,7 @@ const firebaseConfig = {
       } else if (mode === "signup") {
         const cred = await auth.createUserWithEmailAndPassword(email, pw);
         await cred.user.updateProfile({ displayName: name });
-        $("whoName").textContent = name;
+        $("whoName").textContent = name; myName = name;
       } else {
         await auth.sendPasswordResetEmail(email);
         showMsg("Check your email for a link to make a new password.", true);
@@ -541,7 +774,8 @@ const firebaseConfig = {
 
   auth.onAuthStateChanged(async u => {
     if (unsub) { unsub(); unsub = null; }
-    ref = null;
+    if (classUnsub) { classUnsub(); classUnsub = null; }
+    ref = null; classes = {}; uid = null;
     if (!u) {
       $("app").hidden = true; $("login").hidden = false;
       $("loadingMsg").hidden = true; $("authArea").hidden = false;
@@ -559,9 +793,14 @@ const firebaseConfig = {
     }
     data = snap.exists ? fromDoc(snap.data()) : clone(sample);
     fixCurrent();
-    $("whoName").textContent = u.displayName || (u.email || "").split("@")[0] || "there";
+    uid = u.uid;
+    myName = u.displayName || (u.email || "").split("@")[0] || "";
+    sel = { t: "me", name: data.current };
+    $("whoName").textContent = myName || "there";
     $("login").hidden = true; $("app").hidden = false;
+    $("classMsg").hidden = true;
     startSession();
+    watchClasses();
     if (!snap.exists) save(); else lastJSON = JSON.stringify(snap.data());
     unsub = ref.onSnapshot(s => {
       if (!s.exists || s.metadata.hasPendingWrites || writing) return;
